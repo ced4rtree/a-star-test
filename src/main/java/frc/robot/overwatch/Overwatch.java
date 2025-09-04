@@ -1,13 +1,20 @@
 package frc.robot.overwatch;
 
+import java.util.EnumSet;
 import java.util.Optional;
 
+import edu.wpi.first.epilogue.Epilogue;
 import edu.wpi.first.epilogue.Logged;
 import edu.wpi.first.math.geometry.Rotation2d;
+import edu.wpi.first.math.geometry.Translation2d;
 import edu.wpi.first.math.trajectory.TrapezoidProfile;
+import edu.wpi.first.networktables.NetworkTableInstance;
+import edu.wpi.first.networktables.StructArrayPublisher;
+import edu.wpi.first.networktables.StructArrayTopic;
 import edu.wpi.first.wpilibj.Timer;
 import edu.wpi.first.wpilibj.smartdashboard.Mechanism2d;
 import edu.wpi.first.wpilibj.smartdashboard.MechanismLigament2d;
+import edu.wpi.first.wpilibj.smartdashboard.SendableChooser;
 import edu.wpi.first.wpilibj.smartdashboard.SmartDashboard;
 import edu.wpi.first.wpilibj2.command.Command;
 import edu.wpi.first.wpilibj2.command.Commands;
@@ -28,14 +35,22 @@ public class Overwatch extends SubsystemBase {
         = new TrapezoidProfile.State();
     // Not a Node in order to make the logic around starting in an arbitrary position easier
     private SuperstructurePosition previousDestination =
-        new SuperstructurePosition(lift.getHeightMeters(), pivot.getAngleRads());
-    private Node destinationNode;
+        new SuperstructurePosition(pivot.getAngleRads(), lift.getHeightMeters());
+    private Node destinationNode = Node.HOME;
 
     public final Trigger atSetpoint = lift.atSetpoint.and(pivot.atSetpoint);
 
     private Mechanism2d visualization;
     private MechanismLigament2d liftLigament;
     private MechanismLigament2d pivotLigament;
+
+    Translation2d[] safeWaypointNeighbors;
+    Translation2d[] unsafeWaypointNeighbors;
+    Translation2d[] allWaypoints;
+    StructArrayPublisher<Translation2d> safeWaypointPub;
+    StructArrayPublisher<Translation2d> unsafeWaypointPub;
+    StructArrayPublisher<Translation2d> allWaypointPub;
+    SendableChooser<Node> nodeChooser;
 
     public Overwatch() {
         visualization = new Mechanism2d(5.0, 5.0);
@@ -44,12 +59,35 @@ public class Overwatch extends SubsystemBase {
         pivotLigament = liftLigament.append(new MechanismLigament2d("Pivot", 1, -90));
 
         SmartDashboard.putData("Visualization", visualization);
+
+        nodeChooser = new SendableChooser<>();
+        for (Node node : Node.values()) {
+            nodeChooser.addOption(node.name(), node);
+        }
+        nodeChooser.setDefaultOption("FOO", Node.FOO);
+        SmartDashboard.putData(nodeChooser);
+        safeWaypointNeighbors = Graph.nodeSetToTransArr(nodeChooser.getSelected().getNeighbors());
+        unsafeWaypointNeighbors = Graph.superstructurePosArrToTransArr(Graph.UNSAFE_ZONE);
+        allWaypoints = Graph.nodeSetToTransArr(EnumSet.allOf(Node.class));
+
+        var inst = NetworkTableInstance.getDefault();
+        StructArrayTopic<Translation2d> unsafeTopic = inst.getStructArrayTopic("Robot/overwatch/unsafeVertices", Translation2d.struct);
+        StructArrayTopic<Translation2d> safeTopic = inst.getStructArrayTopic("Robot/overwatch/safeNeighbors", Translation2d.struct);
+        StructArrayTopic<Translation2d> allTopic = inst.getStructArrayTopic("Robot/overwatch/allWaypoints", Translation2d.struct);
+        unsafeWaypointPub = unsafeTopic.publish();
+        safeWaypointPub = safeTopic.publish();
+        allWaypointPub = allTopic.publish();
     }
 
     @Override
     public void periodic() {
         liftLigament.setLength(lift.getHeightMeters());
         pivotLigament.setAngle(Rotation2d.fromRadians(pivot.getAngleRads() - Math.PI/2));
+
+        safeWaypointNeighbors = Graph.nodeSetToTransArr(nodeChooser.getSelected().getNeighbors());
+        unsafeWaypointPub.set(unsafeWaypointNeighbors);
+        safeWaypointPub.set(safeWaypointNeighbors);
+        allWaypointPub.set(allWaypoints);
     }
 
     private void followEdge(double t) {

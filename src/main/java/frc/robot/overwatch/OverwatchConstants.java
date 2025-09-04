@@ -2,8 +2,8 @@ package frc.robot.overwatch;
 
 public final class OverwatchConstants {
     public record SuperstructurePosition(
-        double liftHeightMeters,
-        double pivotAngleRads
+        double pivotAngleRads,
+        double liftHeightMeters
     ) {
         public double distanceFrom(SuperstructurePosition other) {
             return Math.hypot(
