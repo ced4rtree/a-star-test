@@ -21,22 +21,26 @@ public class Pivot extends SubsystemBase {
         Double.MAX_VALUE,
         false,
         -Math.PI/2,
-        0.0001, 0.0001
+        0, 0
     );
 
     private PIDController pidController;
 
     private double pos;
-    private double setpoint;
+    private double finalSetpoint;
+    private double tentativeSetpoint;
 
-    public final Trigger atSetpoint =
+    public final Trigger atFinalSetpoint =
         // new Trigger(() -> {
         //     // Takes care of the discontinuity around theta = pi or theta = -pi
         //     double delta = pos - setpoint;
         //     double continuousDelta = (delta + Math.PI) % 2*Math.PI - Math.PI;
         //     return MathUtil.isNear(0, continuousDelta, 0.02);
         // });
-        new Trigger(() -> MathUtil.isNear(setpoint, pos, 0.02));
+        new Trigger(() -> MathUtil.isNear(finalSetpoint, pos, 0.02));
+
+    public final Trigger atTentativeSetpoint
+        = new Trigger(() -> MathUtil.isNear(tentativeSetpoint, pos, 0.02));
 
     public Pivot() {
         pidController = new PIDController(40.0, 0.0, 2.2);
@@ -54,13 +58,20 @@ public class Pivot extends SubsystemBase {
         return pos;
     }
 
+    protected void applyVolts(double volts) {
+        sim.setInput(volts);
+    }
+
     protected void goTo(double angleRads) {
-        pidController.setSetpoint(angleRads);
-        var feedback = pidController.calculate(pos);
+        var feedback = pidController.calculate(pos, angleRads);
         sim.setInput(feedback);
     }
 
     protected void setFinalSetpoint(double angleRads) {
-        setpoint = MathUtil.angleModulus(angleRads);
+        finalSetpoint = MathUtil.angleModulus(angleRads);
+    }
+
+    protected void setTentativeSetpoint(double angleRads) {
+        tentativeSetpoint = MathUtil.angleModulus(angleRads);
     }
 }

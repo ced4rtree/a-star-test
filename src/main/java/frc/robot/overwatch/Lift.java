@@ -2,6 +2,7 @@ package frc.robot.overwatch;
 
 import edu.wpi.first.epilogue.Logged;
 import edu.wpi.first.math.MathUtil;
+import edu.wpi.first.math.Matrix;
 import edu.wpi.first.math.controller.PIDController;
 import edu.wpi.first.math.system.plant.DCMotor;
 import edu.wpi.first.math.system.plant.LinearSystemId;
@@ -19,19 +20,24 @@ public class Lift extends SubsystemBase {
             5
         ),
         DCMotor.getKrakenX60(2),
-        .001, .001
+        0, 0
     );
 
     private double pos;
-    private double setpoint;
+    private double finalSetpoint;
+    private double tentativeSetpoint;
 
-    public final Trigger atSetpoint =
-        new Trigger(() -> MathUtil.isNear(setpoint, pos, 0.1));
+    public final Trigger atFinalSetpoint =
+        new Trigger(() -> MathUtil.isNear(finalSetpoint, pos, 0.1));
+    public final Trigger atTentativeSetpoint =
+        new Trigger(() -> MathUtil.isNear(tentativeSetpoint, pos, 0.1));
 
     private PIDController pidController;
 
     public Lift() {
-        pidController = new PIDController(50.0, 0, 3.0);
+        pidController = new PIDController(3.0, 0, 0.1);
+        sim.setState(2.0*(2*Math.PI), 0.0);
+        pos = sim.getAngularPositionRotations();
     }
 
     @Override
@@ -44,13 +50,20 @@ public class Lift extends SubsystemBase {
         return pos;
     }
 
+    protected void applyVolts(double volts) {
+        sim.setInput(volts);
+    }
+
     protected void goTo(double heightMeters) {
-        pidController.setSetpoint(heightMeters);
-        var feedback = pidController.calculate(pos);
+        var feedback = pidController.calculate(pos, heightMeters);
         sim.setInput(feedback);
     }
 
     protected void setFinalSetpoint(double heightMeters) {
-        setpoint = heightMeters;
+        finalSetpoint = heightMeters;
+    }
+
+    protected void setTentativeSetpoint(double heightMeters) {
+        tentativeSetpoint = heightMeters;
     }
 }

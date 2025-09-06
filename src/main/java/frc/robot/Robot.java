@@ -6,6 +6,7 @@ package frc.robot;
 
 import edu.wpi.first.epilogue.Epilogue;
 import edu.wpi.first.epilogue.Logged;
+import edu.wpi.first.wpilibj.DriverStation;
 import edu.wpi.first.wpilibj.TimedRobot;
 import edu.wpi.first.wpilibj2.command.CommandScheduler;
 import edu.wpi.first.wpilibj2.command.button.CommandXboxController;
@@ -24,8 +25,10 @@ public class Robot extends TimedRobot {
         Epilogue.bind(this);
 
         controller.a().onTrue(overwatch.goTo(Node.HOME));
-        controller.b().onTrue(overwatch.goTo(Node.CORAL_PICK));
-        controller.x().onTrue(overwatch.goTo(Node.L2_PREP));
+        controller.b().onTrue(overwatch.goTo(Node.FOO));
+        controller.x().onTrue(overwatch.goTo(Node.BAR));
+
+        DriverStation.silenceJoystickConnectionWarning(true);
     }
 
     @Override
