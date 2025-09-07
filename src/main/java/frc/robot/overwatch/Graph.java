@@ -10,6 +10,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.stream.Collectors;
 
+import edu.wpi.first.math.Pair;
 import edu.wpi.first.math.geometry.Translation2d;
 import edu.wpi.first.math.trajectory.TrapezoidProfile;
 import frc.robot.overwatch.OverwatchConstants.OverwatchPos;
@@ -72,6 +73,18 @@ public final class Graph {
         }
     }
 
+    public static class PathQuery {
+        public final OverwatchPos startNode;
+        public final Node goalNode;
+
+        public PathQuery(OverwatchPos startNode, Node goalNode) {
+            this.startNode = startNode;
+            this.goalNode = goalNode;
+        }
+    }
+
+    private static Map<PathQuery, List<OverwatchPos>> aStarCache
+        = new HashMap<>();
 
     /**
      * Return the amount of time it takes to travel between the start node
@@ -111,6 +124,11 @@ public final class Graph {
      * smallest F-score until it reaches the goal
      */
     public static Optional<List<OverwatchPos>> pathfind(OverwatchPos startNode, Node goalNode) {
+        PathQuery pathQuery = new PathQuery(startNode, goalNode);
+        if (aStarCache.containsKey(pathQuery)) {
+            return Optional.of(aStarCache.get(pathQuery));
+        }
+
         if (goalNode.equals(startNode)) {
             return Optional.of(List.of(goalNode));
         }
@@ -152,7 +170,9 @@ public final class Graph {
             for (OverwatchPos neighbor : neighbors) {
                 if (neighbor == goalNode) {
                     cameFrom.put(goalNode, current);
-                    return Optional.of(reconstructPath(cameFrom, goalNode));
+                    var ret = reconstructPath(cameFrom, goalNode);
+                    aStarCache.put(pathQuery, ret);
+                    return Optional.of(ret);
                 }
 
                 if (closedList.contains(neighbor)) {
