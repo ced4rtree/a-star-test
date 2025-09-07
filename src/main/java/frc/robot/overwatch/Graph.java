@@ -130,7 +130,7 @@ public final class Graph {
         }
 
         if (goalNode.equals(startNode)) {
-            return Optional.of(List.of(goalNode));
+            return Optional.of(List.of());
         }
 
         var openList = new ArrayList<OverwatchPos>();
