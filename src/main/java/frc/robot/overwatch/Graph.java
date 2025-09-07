@@ -179,8 +179,6 @@ public final class Graph {
             }
         }
 
-        System.out.println("Returning");
-
         return Optional.empty();
     }
 

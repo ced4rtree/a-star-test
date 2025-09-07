@@ -106,7 +106,6 @@ public class Overwatch extends SubsystemBase {
     }
 
     private void followEdge(OverwatchPos end, double t) {
-        // System.out.println("Time: " + t);
         TrapezoidProfile.State setpoint = OverwatchConstants.MOTION_PROFILE.calculate(
             t,
             new TrapezoidProfile.State(),
@@ -128,10 +127,6 @@ public class Overwatch extends SubsystemBase {
         var pivotAngle = previousDestination.pivotAngleRads()
                          + setpoint.position * Math.cos(edgeAngle);
         pivot.goTo(pivotAngle);
-
-        System.out.println("Setpoint position: " + setpoint.position);
-        System.out.println("blah: " + end.distanceFrom(previousDestination));
-        System.out.println("Target angle: " + pivotAngle + ", Target height: " + liftHeight);
 
         if (atTentativeSetpoint.getAsBoolean()) {
             previousDestination = end;
@@ -155,9 +150,6 @@ public class Overwatch extends SubsystemBase {
                     pivot.getAngleRads(),
                     lift.getHeightMeters()
                 );
-            }
-            for (var pos : path) {
-                System.out.println("x: " + pos.pivotAngleRads() + " y: " + pos.liftHeightMeters());
             }
             finalDestination = node;
             lift.setFinalSetpoint(node.liftHeightMeters());
