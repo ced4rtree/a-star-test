@@ -15,6 +15,7 @@ import edu.wpi.first.networktables.NetworkTableInstance;
 import edu.wpi.first.networktables.StructArrayPublisher;
 import edu.wpi.first.networktables.StructArrayTopic;
 import edu.wpi.first.networktables.StructPublisher;
+import edu.wpi.first.wpilibj.RobotBase;
 import edu.wpi.first.wpilibj.Timer;
 import edu.wpi.first.wpilibj.smartdashboard.Mechanism2d;
 import edu.wpi.first.wpilibj.smartdashboard.MechanismLigament2d;
@@ -49,14 +50,7 @@ public class Overwatch extends SubsystemBase {
     private MechanismLigament2d liftLigament;
     private MechanismLigament2d pivotLigament;
 
-    Translation2d[] safeWaypointNeighbors;
-    Translation2d[] unsafeWaypointNeighbors;
-    Translation2d[] allWaypoints;
-    StructArrayPublisher<Translation2d> safeWaypointPub;
-    StructArrayPublisher<Translation2d> unsafeWaypointPub;
-    StructArrayPublisher<Translation2d> allWaypointPub;
-    StructPublisher<Translation2d> positionPub;
-    SendableChooser<Node> nodeChooser;
+    private GraphVisualizer graphVisualizer;
 
     public Overwatch() {
         visualization = new Mechanism2d(5.0, 5.0);
@@ -64,32 +58,14 @@ public class Overwatch extends SubsystemBase {
         liftLigament = liftRoot.append(new MechanismLigament2d("Lift", 0, 90));
         pivotLigament = liftLigament.append(new MechanismLigament2d("Pivot", 1, -90));
 
-        SmartDashboard.putData("Visualization", visualization);
-
-        nodeChooser = new SendableChooser<>();
-        for (Node node : Node.values()) {
-            nodeChooser.addOption(node.name(), node);
-        }
-        nodeChooser.setDefaultOption("FOO", Node.FOO);
-        SmartDashboard.putData(nodeChooser);
-        // safeWaypointNeighbors = Graph.nodeSetToTransArr(nodeChooser.getSelected().getNeighbors());
-        safeWaypointNeighbors = Graph.nodeSetToTransArr(finalDestination.getNeighbors());
-        unsafeWaypointNeighbors = Graph.superstructurePosArrToTransArr(Graph.UNSAFE_ZONE);
-        allWaypoints = Graph.nodeSetToTransArr(EnumSet.allOf(Node.class));
-
-        var inst = NetworkTableInstance.getDefault();
-        StructArrayTopic<Translation2d> unsafeTopic = inst.getStructArrayTopic("Robot/overwatch/unsafeVertices", Translation2d.struct);
-        StructArrayTopic<Translation2d> safeTopic = inst.getStructArrayTopic("Robot/overwatch/safeNeighbors", Translation2d.struct);
-        StructArrayTopic<Translation2d> allTopic = inst.getStructArrayTopic("Robot/overwatch/allWaypoints", Translation2d.struct);
-        unsafeWaypointPub = unsafeTopic.publish();
-        safeWaypointPub = safeTopic.publish();
-        allWaypointPub = allTopic.publish();
-        positionPub = inst.getStructTopic("Robot/overwatch/position", Translation2d.struct).publish();
+        SmartDashboard.putData("Robot/overwatch/visualization", visualization);
 
         setDefaultCommand(this.run(() -> {
             pivot.applyVolts(0);
             lift.applyVolts(0);
         }));
+
+        graphVisualizer = new GraphVisualizer();
     }
 
     @Override
@@ -97,12 +73,13 @@ public class Overwatch extends SubsystemBase {
         liftLigament.setLength(lift.getHeightMeters());
         pivotLigament.setAngle(Rotation2d.fromRadians(pivot.getAngleRads() - Math.PI/2));
 
-        // safeWaypointNeighbors = Graph.nodeSetToTransArr(nodeChooser.getSelected().getNeighbors());
-        safeWaypointNeighbors = Graph.nodeSetToTransArr(finalDestination.getNeighbors());
-        unsafeWaypointPub.set(unsafeWaypointNeighbors);
-        safeWaypointPub.set(safeWaypointNeighbors);
-        allWaypointPub.set(allWaypoints);
-        positionPub.set(new Translation2d(pivot.getAngleRads(), lift.getHeightMeters()));
+        if (RobotBase.isSimulation()) {
+            graphVisualizer.visualize(
+                finalDestination,
+                pivot.getAngleRads(),
+                lift.getHeightMeters()
+            );
+        }
     }
 
     private void followEdge(OverwatchPos end, double t) {
