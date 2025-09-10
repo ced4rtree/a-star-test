@@ -10,9 +10,10 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.stream.Collectors;
 
-import edu.wpi.first.math.Pair;
+import edu.wpi.first.math.geometry.Rotation2d;
 import edu.wpi.first.math.geometry.Translation2d;
 import edu.wpi.first.math.trajectory.TrapezoidProfile;
+import frc.robot.overwatch.Overwatch.RotationType;
 import frc.robot.overwatch.OverwatchConstants.OverwatchPos;
 
 public final class Graph {
@@ -26,12 +27,13 @@ public final class Graph {
 
         // to be amended to during initialization (see static block below)
         // initializing now messes up the jvm since Node isn't a class yet, has to stay null for now
-        private EnumSet<Node> safeNeighbors;
+        private EnumSet<Node> safeClockwiseNeighbors;
+        private EnumSet<Node> safeCounterClockwiseNeighbors;
         private final double liftHeightMeters;
-        private final double pivotAngleRads;
+        private final Rotation2d pivotAngle;
 
         Node(double pivotAngleRads, double liftHeightMeters) {
-            this.pivotAngleRads = pivotAngleRads;
+            this.pivotAngle = Rotation2d.fromRadians(pivotAngleRads);
             this.liftHeightMeters = liftHeightMeters;
         }
 
@@ -41,18 +43,21 @@ public final class Graph {
         }
 
         @Override
-        public double pivotAngleRads() {
-            return pivotAngleRads;
-        }
-
-        @Override public String toString() {
-            return this.name() + " " + super.toString();
+        public Rotation2d pivotAngle() {
+            return pivotAngle;
         }
 
         static {
             // add all neighbors whose edge doesn't intersect the unsafe zone
             for (Node node : Node.values()) {
-                node.safeNeighbors = getSafeNeighbors(node);
+                node.safeClockwiseNeighbors = getSafeNeighbors(new DirectionalPos(
+                    node,
+                    RotationalDirection.CLOCKWISE
+                ));
+                node.safeCounterClockwiseNeighbors = getSafeNeighbors(new DirectionalPos(
+                    node,
+                    RotationalDirection.COUNTER_CLOCKWISE
+                ));
             }
         }
 
@@ -60,38 +65,61 @@ public final class Graph {
          * Return all nodes that are safe to travel directly to, given that you
          * are travelling directly from this node.
          */
-        public EnumSet<Node> getNeighbors() {
-            return safeNeighbors;
+        public EnumSet<Node> getNeighbors(RotationalDirection dir) {
+            return switch (dir) {
+                case CLOCKWISE -> safeClockwiseNeighbors;
+                case COUNTER_CLOCKWISE -> safeCounterClockwiseNeighbors;
+            };
         }
 
         /**
          * Return the amount of time it takes to travel between this node and
          * the specified node.
          */
-        public double travelTime(Node node) {
-            return Graph.travelTime(this, node);
+        public double travelTime(Node node, RotationalDirection dir) {
+            return Graph.travelTime(new DirectionalPos(this, dir), node);
+        }
+
+        public String toString() {
+            return name() + " " + string();
         }
     }
 
-    public static class PathQuery {
-        public final OverwatchPos startNode;
-        public final Node goalNode;
+    /**
+     * Data type used for representing a query between the starting and ending
+     * nodes on a path. Exists just to make the type of the cache a little
+     * easier to read
+     */
+    public static record PathQuery(OverwatchPos startNode, Node goalNode, RotationType rotationType) {}
 
-        public PathQuery(OverwatchPos startNode, Node goalNode) {
-            this.startNode = startNode;
-            this.goalNode = goalNode;
+    /**
+     * Wrapper around {@link OverwatchPos} and a {@link RotationalDirection} to
+     * make a node distinct from another node approached from the other
+     * direction. dir notes the direction this pos will follow after this move,
+     * not the dir that led to this pos.
+     */
+    public static record DirectionalPos(OverwatchPos pos, RotationalDirection dir) {
+        public String toString() {
+            return pos.string() + ", dir: " + dir;
         }
     }
 
-    private static Map<PathQuery, List<OverwatchPos>> aStarCache
+    public enum RotationalDirection {
+        CLOCKWISE,
+        COUNTER_CLOCKWISE,
+        ;
+    }
+
+    private static Map<PathQuery, List<DirectionalPos>> aStarCache
         = new HashMap<>();
 
     /**
      * Return the amount of time it takes to travel between the start node
      * and the goal node.
      */
-    public static double travelTime(OverwatchPos startNode, OverwatchPos goalNode) {
-        double nodeToNodeDist = startNode.distanceFrom(goalNode);
+    public static double travelTime(DirectionalPos startNode, OverwatchPos goalNode_) {
+        OverwatchPos goalNode = repositionNode(startNode, goalNode_);
+        double nodeToNodeDist = startNode.pos().distanceFrom(goalNode);
         var initialState = new TrapezoidProfile.State();
         var finalState = new TrapezoidProfile.State(nodeToNodeDist, 0.0);
         OverwatchConstants.MOTION_PROFILE.calculate(0.02, initialState, finalState);
@@ -102,12 +130,32 @@ public final class Graph {
     /**
      * Returns the gscore for the final node in the provided set
      */
-    public static double cumulativeGScore(List<OverwatchPos> nodes) {
+    private static double cumulativeGScore(List<DirectionalPos> nodes) {
         double gscore = 0.0;
+
         for (int i = 0; i < nodes.size() - 1; i++) {
-            gscore += travelTime(nodes.get(i), nodes.get(i+1));
+            var node = nodes.get(i);
+            gscore += travelTime(node, nodes.get(i+1).pos());
         }
         return gscore;
+    }
+
+    private static double calculateHScore(
+        DirectionalPos from,
+        OverwatchPos goalNode,
+        RotationType rotationType
+    ) {
+        // give any non-preferred movement of the arm a huge penalty
+        double rotationPenalty = 0;
+        if ((rotationType == RotationType.CLOCKWISE
+             && from.dir() == RotationalDirection.COUNTER_CLOCKWISE)
+            || (rotationType == RotationType.COUNTER_CLOCKWISE
+                && from.dir() == RotationalDirection.CLOCKWISE)
+        ) {
+            rotationPenalty = Double.MAX_VALUE;
+        }
+
+        return travelTime(from, goalNode) + rotationPenalty;
     }
 
     /**
@@ -123,9 +171,14 @@ public final class Graph {
      * A* will continuously pathfind by travelling to each node with the
      * smallest F-score until it reaches the goal
      */
-    public static Optional<List<OverwatchPos>> pathfind(OverwatchPos startNode, Node goalNode) {
-        PathQuery pathQuery = new PathQuery(startNode, goalNode);
+    public static Optional<List<DirectionalPos>> pathfind(
+        OverwatchPos startNode,
+        Node goalNode,
+        RotationType rotationType
+    ) {
+        PathQuery pathQuery = new PathQuery(startNode, goalNode, rotationType);
         if (aStarCache.containsKey(pathQuery)) {
+            System.out.println("Cached!");
             return Optional.of(aStarCache.get(pathQuery));
         }
 
@@ -133,19 +186,29 @@ public final class Graph {
             return Optional.of(List.of());
         }
 
-        var openList = new ArrayList<OverwatchPos>();
-        openList.add(startNode);
-        var closedList = new ArrayList<OverwatchPos>();
-        Map<OverwatchPos, OverwatchPos> cameFrom = new HashMap<>();
-        Map<OverwatchPos, Double> gscore = new HashMap<>();
-        Map<OverwatchPos, Double> hscore = new HashMap<>();
+        var openList = new ArrayList<DirectionalPos>();
+        var initialDirection = switch (rotationType) {
+            case CLOCKWISE -> RotationalDirection.CLOCKWISE;
+            case COUNTER_CLOCKWISE -> RotationalDirection.COUNTER_CLOCKWISE;
+            default -> RotationalDirection.CLOCKWISE;
+        };
+        var initialDirectionalPos = new DirectionalPos(startNode, initialDirection);
+        openList.add(initialDirectionalPos);
+        var closedList = new ArrayList<DirectionalPos>();
+        Map<OverwatchPos, DirectionalPos> cameFrom = new HashMap<>();
+        Map<DirectionalPos, Double> gscore = new HashMap<>();
+        Map<DirectionalPos, Double> hscore = new HashMap<>();
 
-        gscore.put(startNode, 0.0);
-        hscore.put(startNode, travelTime(startNode, goalNode));
+        gscore.put(initialDirectionalPos, 0.0);
+        hscore.put(initialDirectionalPos, calculateHScore(
+            initialDirectionalPos,
+            goalNode,
+            rotationType
+        ));
 
-        OverwatchPos current = startNode;
+        DirectionalPos current = initialDirectionalPos;
         while (!openList.isEmpty()) {
-            for (OverwatchPos node : openList) {
+            for (DirectionalPos node : openList) {
                 Double currentFScore =
                     gscore.getOrDefault(current, Double.MAX_VALUE)
                     + hscore.getOrDefault(current, Double.MAX_VALUE);
@@ -161,39 +224,43 @@ public final class Graph {
             closedList.add(current);
 
             EnumSet<Node> neighbors;
-            if (current.getClass() == Node.class) {
-                neighbors = ((Node)current).getNeighbors();
+            if (current.pos().getClass() == Node.class) {
+                neighbors = ((Node)current.pos()).getNeighbors(current.dir());
             } else {
                 neighbors = getSafeNeighbors(current);
             }
 
             for (OverwatchPos neighbor : neighbors) {
-                if (neighbor == goalNode) {
-                    cameFrom.put(goalNode, current);
-                    var ret = reconstructPath(cameFrom, goalNode);
-                    aStarCache.put(pathQuery, ret);
-                    return Optional.of(ret);
-                }
+                for (var dir : RotationalDirection.values()) {
+                    if (neighbor == goalNode && dir == current.dir()) {
+                        cameFrom.put(goalNode, current);
+                        var ret = reconstructPath(cameFrom, goalNode);
+                        aStarCache.put(pathQuery, ret);
+                        return Optional.of(ret);
+                    }
 
-                if (closedList.contains(neighbor)) {
-                    continue;
-                }
+                    var directionalNeighbor = new DirectionalPos(neighbor, dir);
 
-                if (!openList.contains(neighbor)) {
-                    openList.add(neighbor);
-                    hscore.put(neighbor, travelTime(neighbor, goalNode));
-                    var path = reconstructPath(cameFrom, neighbor);
-                    gscore.put(neighbor, cumulativeGScore(path));
-                } else {
-                    OverwatchPos oldConnection = cameFrom.get(neighbor);
-                    cameFrom.put(neighbor, current);
-                    var tentativeGScore = cumulativeGScore(reconstructPath(cameFrom, neighbor));
-                    var currentGScore = gscore.getOrDefault(neighbor, Double.MAX_VALUE);
-                    if (tentativeGScore < currentGScore) {
-                        gscore.put(neighbor, tentativeGScore);
+                    if (closedList.contains(directionalNeighbor)) {
+                        continue;
+                    }
+
+                    if (!openList.contains(directionalNeighbor)) {
+                        openList.add(directionalNeighbor);
+                        hscore.put(directionalNeighbor, calculateHScore(directionalNeighbor, goalNode, rotationType));
+                        var path = reconstructPath(cameFrom, neighbor);
+                        gscore.put(directionalNeighbor, cumulativeGScore(path));
                     } else {
-                        // restore old connection since it was broken a few lines ago
-                        cameFrom.put(neighbor, oldConnection);
+                        DirectionalPos oldConnection = cameFrom.get(neighbor);
+                        cameFrom.put(neighbor, current);
+                        var tentativeGScore = cumulativeGScore(reconstructPath(cameFrom, neighbor));
+                        var currentGScore = gscore.getOrDefault(directionalNeighbor, Double.MAX_VALUE);
+                        if (tentativeGScore < currentGScore) {
+                            gscore.put(directionalNeighbor, tentativeGScore);
+                        } else {
+                            // restore old connection since it was broken a few lines ago
+                            cameFrom.put(neighbor, oldConnection);
+                        }
                     }
                 }
             }
@@ -202,12 +269,13 @@ public final class Graph {
         return Optional.empty();
     }
 
-    private static List<OverwatchPos> reconstructPath(Map<OverwatchPos, OverwatchPos> cameFrom, OverwatchPos lastNode) {
-        Deque<OverwatchPos> totalPath = new ArrayDeque<>();
-        totalPath.add(lastNode);
-        var current = lastNode;
-        while (cameFrom.containsKey(current)) {
-            current = cameFrom.get(current);
+    private static List<DirectionalPos> reconstructPath(Map<OverwatchPos, DirectionalPos> cameFrom, OverwatchPos lastNode) {
+        Deque<DirectionalPos> totalPath = new ArrayDeque<>();
+        var lastPos = new DirectionalPos(lastNode, RotationalDirection.CLOCKWISE);
+        totalPath.add(lastPos);
+        var current = lastPos;
+        while (cameFrom.containsKey(current.pos())) {
+            current = cameFrom.get(current.pos());
             totalPath.addFirst(current);
         }
         return totalPath.stream().toList();
@@ -220,15 +288,43 @@ public final class Graph {
      * It is expected that these vertices are sorted by pivot angle in ascending
      * order.
      */
-    public static final OverwatchPos[] UNSAFE_ZONE = {
-        OverwatchPos.of(-Math.PI, 0),
-        OverwatchPos.of(-Math.PI/2, 1.05),
-        OverwatchPos.of(0, 0),
-    };
+    public static final OverwatchPos[] UNSAFE_ZONE;
+    static {
+        ArrayList<OverwatchPos> unsafeZone = new ArrayList<>();
+        for (var pos : new OverwatchPos[] {
+            OverwatchPos.of(Rotation2d.k180deg.unaryMinus(), 0),
+            OverwatchPos.of(Rotation2d.kCW_90deg, 1.05),
+            OverwatchPos.of(Rotation2d.kZero, 0),
+        }) {
+            unsafeZone.add(pos);
+        }
+
+        // unsafeZone gets mutated a lot, nice to have a copy of the original
+        var unsafeZoneReference = unsafeZone.toArray(OverwatchPos[]::new);
+
+        // wrap the unsafe zone around the periodic boundary
+        for (var pos : unsafeZoneReference) {
+            unsafeZone.add(OverwatchPos.of(
+                // can't do .plus() because that'll clamp the rotation between -pi and pi
+                Rotation2d.fromRadians(pos.pivotAngle().getRadians() + 2*Math.PI),
+                pos.liftHeightMeters()
+            ));
+        }
+
+        for (int i = unsafeZoneReference.length-1; i >= 0; i--) {
+            var pos = unsafeZoneReference[i];
+            unsafeZone.addFirst(OverwatchPos.of(
+                Rotation2d.fromRadians(pos.pivotAngle().getRadians() - 2*Math.PI),
+                pos.liftHeightMeters()
+            ));
+        }
+
+        UNSAFE_ZONE = unsafeZone.toArray(OverwatchPos[]::new);
+    }
 
     public static Translation2d nodeToTranslation2d(Node node) {
         return new Translation2d(
-            node.pivotAngleRads(),
+            node.pivotAngle().getRadians(),
             node.liftHeightMeters()
         );
     }
@@ -239,7 +335,7 @@ public final class Graph {
             List<Node> nodesList = nodes.stream()
                 .collect(Collectors.toList());
             OverwatchPos pos = nodesList.get(i);
-            ret[i] = new Translation2d(pos.pivotAngleRads(), pos.liftHeightMeters());
+            ret[i] = new Translation2d(pos.pivotAngle().getRadians(), pos.liftHeightMeters());
         }
         return ret;
     }
@@ -248,26 +344,59 @@ public final class Graph {
         Translation2d[] ret = new Translation2d[positions.length];
         for (int i = 0; i < positions.length; i++) {
             var pos = positions[i];
-            ret[i] = new Translation2d(pos.pivotAngleRads(), pos.liftHeightMeters());
+            ret[i] = new Translation2d(pos.pivotAngle().getRadians(), pos.liftHeightMeters());
         }
         return ret;
     }
 
-    private static EnumSet<Node> getSafeNeighbors(OverwatchPos pos) {
+    /**
+     * Return an {@link OverwatchPos} that is shifted 2*pi to the left or right
+     * if such a transformation is needed in order to be able to draw a straight
+     * line from base to node while maintaining the direction specified by base.
+     */
+    public static OverwatchPos repositionNode(DirectionalPos base, OverwatchPos node) {
+        double nodeAngle = node.pivotAngle().getRadians();
+        double baseAngle = base.pos().pivotAngle().getRadians();
+
+        OverwatchPos ret = node;
+
+        if (base.dir() == RotationalDirection.CLOCKWISE
+            && baseAngle > nodeAngle
+        ) {
+            ret = OverwatchPos.of(
+                Rotation2d.fromRadians(nodeAngle + 2*Math.PI),
+                node.liftHeightMeters()
+            );
+        } else if (base.dir() == RotationalDirection.COUNTER_CLOCKWISE
+                   && baseAngle < nodeAngle
+        ) {
+            ret = OverwatchPos.of(
+                Rotation2d.fromRadians(nodeAngle - 2*Math.PI),
+                node.liftHeightMeters()
+            );
+        }
+
+        return ret;
+    }
+
+    private static EnumSet<Node> getSafeNeighbors(DirectionalPos pos) {
         var ret = EnumSet.noneOf(Node.class);
 
         // add all neighbors whose edge doesn't intersect the unsafe zone
-        for (Node node : Node.values()) {
+        for (Node unmodifiedNode : Node.values()) {
+
+            OverwatchPos node = repositionNode(pos, unmodifiedNode);
+
             for (int i = 0; i < UNSAFE_ZONE.length - 1; i++) {
                 OverwatchPos[][] segments = {
-                    { pos, node },
+                    { pos.pos(), node },
                     { UNSAFE_ZONE[i], UNSAFE_ZONE[i+1] }
                 };
 
                 if (doIntersect(segments)) {
                     break;
-                } else if (node != pos) {
-                    ret.add(node);
+                } else if (node != pos.pos()) {
+                    ret.add(unmodifiedNode);
                 }
             }
         }
@@ -282,13 +411,13 @@ public final class Graph {
         OverwatchPos q,
         OverwatchPos r
     ) {
-        double px = p.pivotAngleRads();
+        double px = p.pivotAngle().getRadians();
         double py = p.liftHeightMeters();
 
-        double qx = q.pivotAngleRads();
+        double qx = q.pivotAngle().getRadians();
         double qy = q.liftHeightMeters();
 
-        double rx = r.pivotAngleRads();
+        double rx = r.pivotAngle().getRadians();
         double ry = r.liftHeightMeters();
 
         return (qx <= Math.max(px, rx) && 
@@ -306,13 +435,13 @@ public final class Graph {
         OverwatchPos q,
         OverwatchPos r
     ) {
-        double px = p.pivotAngleRads();
+        double px = p.pivotAngle().getRadians();
         double py = p.liftHeightMeters();
 
-        double qx = q.pivotAngleRads();
+        double qx = q.pivotAngle().getRadians();
         double qy = q.liftHeightMeters();
 
-        double rx = r.pivotAngleRads();
+        double rx = r.pivotAngle().getRadians();
         double ry = r.liftHeightMeters();
 
         double val = (qy - py) * (rx - qx) -

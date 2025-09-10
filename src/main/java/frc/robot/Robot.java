@@ -12,6 +12,7 @@ import edu.wpi.first.wpilibj2.command.CommandScheduler;
 import edu.wpi.first.wpilibj2.command.button.CommandXboxController;
 import frc.robot.overwatch.Overwatch;
 import frc.robot.overwatch.Graph.Node;
+import frc.robot.overwatch.Overwatch.RotationType;
 
 @Logged
 public class Robot extends TimedRobot {
@@ -24,9 +25,10 @@ public class Robot extends TimedRobot {
         
         Epilogue.bind(this);
 
-        controller.a().onTrue(overwatch.goTo(Node.HOME));
-        controller.b().onTrue(overwatch.goTo(Node.FOO));
-        controller.x().onTrue(overwatch.goTo(Node.BAR));
+        controller.a().onTrue(overwatch.goTo(Node.HOME, RotationType.SHORTEST));
+        controller.b().onTrue(overwatch.goTo(Node.FOO, RotationType.SHORTEST));
+        controller.x().onTrue(overwatch.goTo(Node.L2_PREP, RotationType.SHORTEST));
+        controller.y().onTrue(overwatch.goTo(Node.L2_PREP, RotationType.COUNTER_CLOCKWISE));
 
         DriverStation.silenceJoystickConnectionWarning(true);
     }

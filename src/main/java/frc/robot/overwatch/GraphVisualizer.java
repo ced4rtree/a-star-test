@@ -8,6 +8,7 @@ import edu.wpi.first.networktables.StructArrayPublisher;
 import edu.wpi.first.networktables.StructArrayTopic;
 import edu.wpi.first.networktables.StructPublisher;
 import frc.robot.overwatch.Graph.Node;
+import frc.robot.overwatch.Graph.RotationalDirection;
 
 public class GraphVisualizer {
     Translation2d[] safeWaypointNeighbors;
@@ -19,7 +20,7 @@ public class GraphVisualizer {
     StructPublisher<Translation2d> positionPub;
 
     public GraphVisualizer() {
-        safeWaypointNeighbors = Graph.nodeSetToTransArr(Node.HOME.getNeighbors());
+        safeWaypointNeighbors = Graph.nodeSetToTransArr(getAllNeighbors(Node.HOME));
         unsafeWaypointNeighbors = Graph.superstructurePosArrToTransArr(Graph.UNSAFE_ZONE);
         allWaypoints = Graph.nodeSetToTransArr(EnumSet.allOf(Node.class));
 
@@ -34,10 +35,16 @@ public class GraphVisualizer {
     }
 
     public void visualize(Node currentNode, double pivotAngle, double liftHeight) {
-        safeWaypointNeighbors = Graph.nodeSetToTransArr(currentNode.getNeighbors());
+        safeWaypointNeighbors = Graph.nodeSetToTransArr(getAllNeighbors(currentNode));
         unsafeWaypointPub.set(unsafeWaypointNeighbors);
         safeWaypointPub.set(safeWaypointNeighbors);
         allWaypointPub.set(allWaypoints);
         positionPub.set(new Translation2d(pivotAngle, liftHeight));
+    }
+
+    private EnumSet<Node> getAllNeighbors(Node node) {
+        var neighbors = Node.HOME.getNeighbors(RotationalDirection.CLOCKWISE);
+        neighbors.addAll(Node.HOME.getNeighbors(RotationalDirection.COUNTER_CLOCKWISE));
+        return neighbors;
     }
 }

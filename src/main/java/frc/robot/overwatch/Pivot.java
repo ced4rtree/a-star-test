@@ -4,6 +4,7 @@ import edu.wpi.first.epilogue.Logged;
 import edu.wpi.first.math.MathUtil;
 import edu.wpi.first.math.controller.PIDController;
 import edu.wpi.first.math.controller.SimpleMotorFeedforward;
+import edu.wpi.first.math.geometry.Rotation2d;
 import edu.wpi.first.math.system.plant.DCMotor;
 import edu.wpi.first.wpilibj.simulation.SingleJointedArmSim;
 import edu.wpi.first.wpilibj2.command.SubsystemBase;
@@ -26,21 +27,16 @@ public class Pivot extends SubsystemBase {
 
     private PIDController pidController;
 
-    private double pos;
-    private double finalSetpoint;
-    private double tentativeSetpoint;
+    private Rotation2d pos = new Rotation2d();
+    private double posWrapped;
+    private Rotation2d finalSetpoint = new Rotation2d();
+    private Rotation2d tentativeSetpoint = new Rotation2d();
 
-    public final Trigger atFinalSetpoint =
-        // new Trigger(() -> {
-        //     // Takes care of the discontinuity around theta = pi or theta = -pi
-        //     double delta = pos - setpoint;
-        //     double continuousDelta = (delta + Math.PI) % 2*Math.PI - Math.PI;
-        //     return MathUtil.isNear(0, continuousDelta, 0.02);
-        // });
-        new Trigger(() -> MathUtil.isNear(finalSetpoint, pos, 0.02));
+    public final Trigger atFinalSetpoint
+        = new Trigger(() -> MathUtil.isNear(finalSetpoint.minus(pos).getRadians(), 0, 0.02));
 
     public final Trigger atTentativeSetpoint
-        = new Trigger(() -> MathUtil.isNear(tentativeSetpoint, pos, 0.02));
+        = new Trigger(() -> MathUtil.isNear(tentativeSetpoint.minus(pos).getRadians(), 0, 0.02));
 
     public Pivot() {
         pidController = new PIDController(40.0, 0.0, 2.2);
@@ -50,11 +46,12 @@ public class Pivot extends SubsystemBase {
     @Override
     public void periodic() {
         sim.update(.02);
-        pos = MathUtil.angleModulus(sim.getAngleRads());
+        pos = Rotation2d.fromRadians(sim.getAngleRads());
+        posWrapped = MathUtil.angleModulus(pos.getRadians());
         // pos = sim.getAngleRads();
     }
 
-    public double getAngleRads() {
+    public Rotation2d getAngle() {
         return pos;
     }
 
@@ -62,16 +59,16 @@ public class Pivot extends SubsystemBase {
         sim.setInput(volts);
     }
 
-    protected void goTo(double angleRads) {
-        var feedback = pidController.calculate(pos, angleRads);
+    protected void goTo(Rotation2d angle) {
+        var feedback = pidController.calculate(pos.getRadians(), angle.getRadians());
         sim.setInput(feedback);
     }
 
-    protected void setFinalSetpoint(double angleRads) {
-        finalSetpoint = MathUtil.angleModulus(angleRads);
+    protected void setFinalSetpoint(Rotation2d angle) {
+        finalSetpoint = angle;
     }
 
-    protected void setTentativeSetpoint(double angleRads) {
-        tentativeSetpoint = MathUtil.angleModulus(angleRads);
+    protected void setTentativeSetpoint(Rotation2d angle) {
+        tentativeSetpoint = angle;
     }
 }

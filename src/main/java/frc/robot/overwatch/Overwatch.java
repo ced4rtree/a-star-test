@@ -1,45 +1,42 @@
 package frc.robot.overwatch;
 
-import java.util.ArrayList;
-import java.util.EnumSet;
 import java.util.List;
-import java.util.Optional;
 
-import edu.wpi.first.epilogue.Epilogue;
 import edu.wpi.first.epilogue.Logged;
-import edu.wpi.first.math.Pair;
 import edu.wpi.first.math.geometry.Rotation2d;
-import edu.wpi.first.math.geometry.Translation2d;
 import edu.wpi.first.math.trajectory.TrapezoidProfile;
-import edu.wpi.first.networktables.NetworkTableInstance;
-import edu.wpi.first.networktables.StructArrayPublisher;
-import edu.wpi.first.networktables.StructArrayTopic;
-import edu.wpi.first.networktables.StructPublisher;
 import edu.wpi.first.wpilibj.RobotBase;
 import edu.wpi.first.wpilibj.Timer;
 import edu.wpi.first.wpilibj.smartdashboard.Mechanism2d;
 import edu.wpi.first.wpilibj.smartdashboard.MechanismLigament2d;
-import edu.wpi.first.wpilibj.smartdashboard.SendableChooser;
 import edu.wpi.first.wpilibj.smartdashboard.SmartDashboard;
 import edu.wpi.first.wpilibj2.command.Command;
 import edu.wpi.first.wpilibj2.command.CommandScheduler;
 import edu.wpi.first.wpilibj2.command.Commands;
 import edu.wpi.first.wpilibj2.command.SubsystemBase;
 import edu.wpi.first.wpilibj2.command.button.Trigger;
+import frc.robot.overwatch.Graph.DirectionalPos;
 import frc.robot.overwatch.Graph.Node;
+import frc.robot.overwatch.Graph.RotationalDirection;
 import frc.robot.overwatch.OverwatchConstants.OverwatchPos;
 
 @Logged
 public class Overwatch extends SubsystemBase {
+    public enum RotationType {
+        CLOCKWISE,
+        COUNTER_CLOCKWISE,
+        SHORTEST
+    }
+
     public Pivot pivot = new Pivot();
     public Lift lift = new Lift();
 
     private TrapezoidProfile.State previousSetpoint
         = new TrapezoidProfile.State();
     private OverwatchPos previousDestination =
-        OverwatchPos.of(pivot.getAngleRads(), lift.getHeightMeters());
+        OverwatchPos.of(pivot.getAngle(), lift.getHeightMeters());
     // the nodes that will move the lift & pivot while avoiding the unsafe zone
-    private List<OverwatchPos> path = List.of(Node.HOME);
+    private List<DirectionalPos> path = List.of();
     private Node finalDestination = Node.HOME;
 
     public final Trigger atGlobalSetpoint = lift.atFinalSetpoint.and(pivot.atFinalSetpoint);
@@ -71,77 +68,84 @@ public class Overwatch extends SubsystemBase {
     @Override
     public void periodic() {
         liftLigament.setLength(lift.getHeightMeters());
-        pivotLigament.setAngle(Rotation2d.fromRadians(pivot.getAngleRads() - Math.PI/2));
+        pivotLigament.setAngle(pivot.getAngle().minus(Rotation2d.kCCW_90deg));
 
         if (RobotBase.isSimulation()) {
             graphVisualizer.visualize(
                 finalDestination,
-                pivot.getAngleRads(),
+                pivot.getAngle().getRadians(),
                 lift.getHeightMeters()
             );
         }
     }
 
-    private void followEdge(OverwatchPos end, double t) {
+    private void followEdge(RotationalDirection dir, OverwatchPos pos, double t) {
+        DirectionalPos previousPos = new DirectionalPos(previousDestination, dir);
+        OverwatchPos goal = Graph.repositionNode(previousPos, pos);
+
         TrapezoidProfile.State setpoint = OverwatchConstants.MOTION_PROFILE.calculate(
             t,
             new TrapezoidProfile.State(),
             new TrapezoidProfile.State(
-                end.distanceFrom(previousDestination),
+                goal.distanceFrom(previousDestination),
                 0
             )
         );
 
-        double edgeAngle = Math.atan2(
-            end.heightDelta(previousDestination),
-            end.angleDelta(previousDestination)
+		double edgeAngle = Math.atan2(
+            goal.heightDelta(previousDestination),
+            goal.angleDelta(previousDestination).getRadians()
         );
 
         var liftHeight = previousDestination.liftHeightMeters()
                          + setpoint.position * Math.sin(edgeAngle);
         lift.goTo(liftHeight);
 
-        var pivotAngle = previousDestination.pivotAngleRads()
-                         + setpoint.position * Math.cos(edgeAngle);
+        var pivotAngle = previousDestination.pivotAngle()
+            .plus(Rotation2d.fromRadians(setpoint.position * Math.cos(edgeAngle)));
         pivot.goTo(pivotAngle);
 
         if (atTentativeSetpoint.getAsBoolean()) {
-            previousDestination = end;
+            // don't use goal here, since that's repositioned on the graph
+            previousDestination = pos;
         }
     }
 
-    public Command goTo(Node node) {
+    public Command goTo(Node node, RotationType rotationType) {
         Timer timer = new Timer();
         return this.runOnce(() -> {
             if (atTentativeSetpoint.getAsBoolean()) {
-                path = Graph.pathfind(finalDestination, node)
+                path = Graph.pathfind(finalDestination, node, rotationType)
                     .orElseThrow();
             } else {
                 var currentPos = OverwatchPos.of(
-                    pivot.getAngleRads(),
+                    pivot.getAngle(),
                     lift.getHeightMeters()
                 );
-                path = Graph.pathfind(currentPos, node)
+                path = Graph.pathfind(currentPos, node, rotationType)
                     .orElseThrow();
                 previousDestination = OverwatchPos.of(
-                    pivot.getAngleRads(),
+                    pivot.getAngle(),
                     lift.getHeightMeters()
                 );
             }
             finalDestination = node;
             lift.setFinalSetpoint(node.liftHeightMeters());
-            pivot.setFinalSetpoint(node.pivotAngleRads());
+            pivot.setFinalSetpoint(node.pivotAngle());
         }).andThen(this.runOnce(() -> {
             Command followEdgeCommand = Commands.none();
-            for (OverwatchPos pos : path) {
+            for (int i = 0; i < path.size() - 1; i++) {
+                var currentPos = path.get(i);
+                var nextPos = path.get(i+1);
+                System.out.println("Pos: " + nextPos);
                 followEdgeCommand = followEdgeCommand.andThen(
-                    this.run(() -> followEdge(pos, timer.get()))
+                    this.run(() -> followEdge(currentPos.dir(), nextPos.pos(), timer.get()))
                         .until(atTentativeSetpoint)
                         .beforeStarting(() -> {
                             previousSetpoint = new TrapezoidProfile.State();
                             timer.restart();
-                            lift.setTentativeSetpoint(pos.liftHeightMeters());
-                            pivot.setTentativeSetpoint(pos.pivotAngleRads());
+                            lift.setTentativeSetpoint(nextPos.pos().liftHeightMeters());
+                            pivot.setTentativeSetpoint(nextPos.pos().pivotAngle());
                         })
                 );
             }
