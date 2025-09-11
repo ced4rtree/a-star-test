@@ -15,7 +15,6 @@ import edu.wpi.first.wpilibj2.command.CommandScheduler;
 import edu.wpi.first.wpilibj2.command.Commands;
 import edu.wpi.first.wpilibj2.command.SubsystemBase;
 import edu.wpi.first.wpilibj2.command.button.Trigger;
-import frc.robot.overwatch.Graph.DirectionalPos;
 import frc.robot.overwatch.Graph.Node;
 import frc.robot.overwatch.Graph.RotationalDirection;
 import frc.robot.overwatch.OverwatchConstants.OverwatchPos;
@@ -31,12 +30,8 @@ public class Overwatch extends SubsystemBase {
     public Pivot pivot = new Pivot();
     public Lift lift = new Lift();
 
-    private TrapezoidProfile.State previousSetpoint
-        = new TrapezoidProfile.State();
     private OverwatchPos previousDestination =
         OverwatchPos.of(pivot.getAngle(), lift.getHeightMeters());
-    // the nodes that will move the lift & pivot while avoiding the unsafe zone
-    private List<DirectionalPos> path = List.of();
     private Node finalDestination = Node.HOME;
 
     public final Trigger atGlobalSetpoint = lift.atFinalSetpoint.and(pivot.atFinalSetpoint);
@@ -79,9 +74,8 @@ public class Overwatch extends SubsystemBase {
         }
     }
 
-    private void followEdge(RotationalDirection dir, OverwatchPos pos, double t) {
-        DirectionalPos previousPos = new DirectionalPos(previousDestination, dir);
-        OverwatchPos goal = Graph.repositionNode(previousPos, pos);
+    private void followEdge(OverwatchPos from, OverwatchPos to, RotationalDirection dir, double t) {
+        OverwatchPos goal = Graph.repositionNode(from, to, dir);
 
         TrapezoidProfile.State setpoint = OverwatchConstants.MOTION_PROFILE.calculate(
             t,
@@ -107,49 +101,73 @@ public class Overwatch extends SubsystemBase {
 
         if (atTentativeSetpoint.getAsBoolean()) {
             // don't use goal here, since that's repositioned on the graph
-            previousDestination = pos;
+            previousDestination = to;
         }
     }
 
     public Command goTo(Node node, RotationType rotationType) {
         Timer timer = new Timer();
+
         return this.runOnce(() -> {
+            List<OverwatchPos> path = List.of();
+            RotationalDirection dir;
+
+            OverwatchPos currentPosition;
             if (atTentativeSetpoint.getAsBoolean()) {
-                path = Graph.pathfind(finalDestination, node, rotationType)
-                    .orElseThrow();
+                currentPosition = previousDestination;
             } else {
-                var currentPos = OverwatchPos.of(
-                    pivot.getAngle(),
-                    lift.getHeightMeters()
-                );
-                path = Graph.pathfind(currentPos, node, rotationType)
-                    .orElseThrow();
-                previousDestination = OverwatchPos.of(
+                currentPosition = OverwatchPos.of(
                     pivot.getAngle(),
                     lift.getHeightMeters()
                 );
             }
+
+            dir = switch (rotationType) {
+                case CLOCKWISE -> RotationalDirection.CLOCKWISE;
+                case COUNTER_CLOCKWISE -> RotationalDirection.COUNTER_CLOCKWISE;
+                default -> {
+                    // choose whichever direction has the shortest time when
+                    // going straight from node A to node B
+                    double travelTimeClockwise = Graph.travelTime(
+                        currentPosition,
+                        node,
+                        RotationalDirection.CLOCKWISE
+                    );
+                    double travelTimeCounterClockwise = Graph.travelTime(
+                        currentPosition,
+                        node,
+                        RotationalDirection.COUNTER_CLOCKWISE
+                    );
+
+                    if (travelTimeClockwise > travelTimeCounterClockwise) {
+                        yield RotationalDirection.COUNTER_CLOCKWISE;
+                    } else {
+                        yield RotationalDirection.CLOCKWISE;
+                    }
+                }
+            };
+            path = Graph.pathfind(currentPosition, node, dir)
+                .orElseThrow();
             finalDestination = node;
             lift.setFinalSetpoint(node.liftHeightMeters());
             pivot.setFinalSetpoint(node.pivotAngle());
-        }).andThen(this.runOnce(() -> {
+
             Command followEdgeCommand = Commands.none();
             for (int i = 0; i < path.size() - 1; i++) {
                 var currentPos = path.get(i);
                 var nextPos = path.get(i+1);
                 System.out.println("Pos: " + nextPos);
                 followEdgeCommand = followEdgeCommand.andThen(
-                    this.run(() -> followEdge(currentPos.dir(), nextPos.pos(), timer.get()))
+                    this.run(() -> followEdge(currentPos, nextPos, dir, timer.get()))
                         .until(atTentativeSetpoint)
                         .beforeStarting(() -> {
-                            previousSetpoint = new TrapezoidProfile.State();
                             timer.restart();
-                            lift.setTentativeSetpoint(nextPos.pos().liftHeightMeters());
-                            pivot.setTentativeSetpoint(nextPos.pos().pivotAngle());
-                        })
+                            lift.setTentativeSetpoint(nextPos.liftHeightMeters());
+                            pivot.setTentativeSetpoint(nextPos.pivotAngle());
+                    })
                 );
             }
             CommandScheduler.getInstance().schedule(followEdgeCommand);
-        }));
+        });
     }
 }
