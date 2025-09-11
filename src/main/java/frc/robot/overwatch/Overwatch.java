@@ -120,6 +120,7 @@ public class Overwatch extends SubsystemBase {
                     pivot.getAngle(),
                     lift.getHeightMeters()
                 );
+                previousDestination = currentPosition;
             }
 
             dir = switch (rotationType) {
@@ -156,7 +157,6 @@ public class Overwatch extends SubsystemBase {
             for (int i = 0; i < path.size() - 1; i++) {
                 var currentPos = path.get(i);
                 var nextPos = path.get(i+1);
-                System.out.println("Pos: " + nextPos);
                 followEdgeCommand = followEdgeCommand.andThen(
                     this.run(() -> followEdge(currentPos, nextPos, dir, timer.get()))
                         .until(atTentativeSetpoint)

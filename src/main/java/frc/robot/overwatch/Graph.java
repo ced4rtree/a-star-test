@@ -2,6 +2,7 @@ package frc.robot.overwatch;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Deque;
 import java.util.EnumSet;
 import java.util.HashMap;
@@ -21,7 +22,7 @@ public final class Graph {
         CORAL_PICK (-Math.PI/2,   1.1),
         L2_PREP    (Math.PI/6,    0.2),
         FOO        (-5*Math.PI/6, 0.8),
-        BAR        (Math.PI/6,    0.8),
+        BAR        (-1*Math.PI/6,    0.8),
         ;
 
         // to be amended to during initialization (see static block below)
@@ -212,24 +213,28 @@ public final class Graph {
                     continue;
                 }
 
-                if (!openList.contains(neighbor)) {
-                    openList.add(neighbor);
-                    hscore.put(neighbor, calculateHScore(neighbor, goalNode, dir));
-                    var path = reconstructPath(cameFrom, neighbor);
-                    gscore.put(neighbor, cumulativeGScore(path, dir));
+                var tentativeGScore = cumulativeGScore(reconstructPath(cameFrom, neighbor), dir);
+                var tentativeHScore = calculateHScore(neighbor, goalNode, dir);
+                var tentativeFScore = tentativeGScore + tentativeHScore;
+                var currentFScore =
+                    gscore.getOrDefault(neighbor, Double.MAX_VALUE)
+                    + hscore.getOrDefault(neighbor, Double.MAX_VALUE);
+
+                if ((openList.contains(neighbor) || closedList.contains(neighbor))
+                    && tentativeFScore > currentFScore
+                ) {
+                    continue;
                 } else {
-                    OverwatchPos oldConnection = cameFrom.get(neighbor);
-                    cameFrom.put(neighbor, current);
-                    var tentativeGScore = cumulativeGScore(reconstructPath(cameFrom, neighbor), dir);
-                    var currentGScore = gscore.getOrDefault(neighbor, Double.MAX_VALUE);
-                    if (tentativeGScore < currentGScore) {
-                        gscore.put(neighbor, tentativeGScore);
-                    } else {
-                        // restore old connection since it was broken a few lines ago
-                        cameFrom.put(neighbor, oldConnection);
+                    if (!openList.contains(neighbor)) {
+                        openList.add(neighbor);
                     }
+                    gscore.put(neighbor, tentativeGScore);
+                    hscore.put(neighbor, tentativeHScore);
+                    cameFrom.put(neighbor, current);
                 }
             }
+
+            closedList.add(current);
         }
 
         return Optional.empty();
@@ -317,7 +322,7 @@ public final class Graph {
     /**
      * Return an {@link OverwatchPos} that is shifted 2*pi to the left or right
      * if such a transformation is needed in order to be able to draw a straight
-     * line from base to node while maintaining the direction specified by base.
+     * line from base to node while maintaining the direction specified.
      */
     public static OverwatchPos repositionNode(
         OverwatchPos base,
@@ -354,6 +359,7 @@ public final class Graph {
 
             OverwatchPos node = repositionNode(pos, unmodifiedNode, dir);
 
+            boolean doIntersect = false;
             for (int i = 0; i < UNSAFE_ZONE.length - 1; i++) {
                 OverwatchPos[][] segments = {
                     { pos, node },
@@ -361,10 +367,13 @@ public final class Graph {
                 };
 
                 if (doIntersect(segments)) {
+                    doIntersect = true;
                     break;
-                } else if (node != pos) {
-                    ret.add(unmodifiedNode);
                 }
+            }
+
+            if (!doIntersect) {
+                ret.add(unmodifiedNode);
             }
         }
 
