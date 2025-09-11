@@ -30,6 +30,7 @@ public final class Graph {
         // initializing now messes up the jvm since Node isn't a class yet, has to stay null for now
         private EnumSet<Node> safeClockwiseNeighbors;
         private EnumSet<Node> safeCounterClockwiseNeighbors;
+        private EnumSet<Node> unsafeNeighborOverrides;
         private final double liftHeightMeters;
         private final Rotation2d pivotAngle;
 
@@ -51,10 +52,23 @@ public final class Graph {
         static {
             // add all neighbors whose edge doesn't intersect the unsafe zone
             for (Node node : Node.values()) {
-                node.safeClockwiseNeighbors
-                  = getSafeNeighbors(node, RotationalDirection.CLOCKWISE);
-                node.safeCounterClockwiseNeighbors
-                  = getSafeNeighbors(node, RotationalDirection.COUNTER_CLOCKWISE);
+                // force override which nodes can be travelled to from where
+                // e.g. CORAL_PICK can only be accessed from HOME
+                node.unsafeNeighborOverrides = switch(node) {
+                    case HOME -> EnumSet.noneOf(Node.class);
+                    default -> EnumSet.of(Node.CORAL_PICK);
+                };
+
+                node.safeClockwiseNeighbors = getSafeNeighbors(
+                    node,
+                    RotationalDirection.CLOCKWISE,
+                    node.unsafeNeighborOverrides
+                );
+                node.safeCounterClockwiseNeighbors = getSafeNeighbors(
+                    node,
+                    RotationalDirection.COUNTER_CLOCKWISE,
+                    node.unsafeNeighborOverrides
+                );
             }
         }
 
@@ -353,6 +367,14 @@ public final class Graph {
     }
 
     private static EnumSet<Node> getSafeNeighbors(OverwatchPos pos, RotationalDirection dir) {
+        return getSafeNeighbors(pos, dir, EnumSet.noneOf(Node.class));
+    }
+
+    private static EnumSet<Node> getSafeNeighbors(
+        OverwatchPos pos,
+        RotationalDirection dir,
+        EnumSet<Node> unsafeNodes
+    ) {
         var ret = EnumSet.noneOf(Node.class);
 
         // add all neighbors whose edge doesn't intersect the unsafe zone
@@ -367,7 +389,7 @@ public final class Graph {
                     { UNSAFE_ZONE[i], UNSAFE_ZONE[i+1] }
                 };
 
-                if (doIntersect(segments)) {
+                if (unsafeNodes.contains(node) || doIntersect(segments)) {
                     doIntersect = true;
                     break;
                 }

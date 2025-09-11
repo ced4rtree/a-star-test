@@ -27,8 +27,8 @@ public class Robot extends TimedRobot {
         Epilogue.bind(this);
 
         controller.a().onTrue(overwatch.goTo(Node.HOME, RotationType.SHORTEST));
-        controller.b().onTrue(overwatch.goTo(Node.L2_PREP, RotationType.CLOCKWISE));
-        controller.x().onTrue(overwatch.goTo(Node.L2_PREP, RotationType.COUNTER_CLOCKWISE));
+        controller.b().onTrue(overwatch.goTo(Node.FOO, RotationType.SHORTEST));
+        controller.x().onTrue(overwatch.goTo(Node.BAR, RotationType.SHORTEST));
         controller.y().onTrue(overwatch.goTo(Node.HOME, RotationType.COUNTER_CLOCKWISE));
 
         DriverStation.silenceJoystickConnectionWarning(true);
