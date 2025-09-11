@@ -11,6 +11,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.stream.Collectors;
 
+import edu.wpi.first.math.MathUtil;
 import edu.wpi.first.math.geometry.Rotation2d;
 import edu.wpi.first.math.geometry.Translation2d;
 import edu.wpi.first.math.trajectory.TrapezoidProfile;
@@ -33,7 +34,7 @@ public final class Graph {
         private final Rotation2d pivotAngle;
 
         Node(double pivotAngleRads, double liftHeightMeters) {
-            this.pivotAngle = Rotation2d.fromRadians(pivotAngleRads);
+            this.pivotAngle = Rotation2d.fromRadians(MathUtil.angleModulus(pivotAngleRads));
             this.liftHeightMeters = liftHeightMeters;
         }
 
